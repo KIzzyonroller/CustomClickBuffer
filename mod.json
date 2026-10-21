@@ -3,7 +3,7 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.6.0",
+	"version": "v1.6.1",
 	"id": "yourname.customclickbuffer",
 	"name": "Custom Click Buffer",
 	"developer": "yourname",
@@ -15,7 +15,7 @@
 			"description": "Turn the whole mod on or off.",
 			"default": true
 		},
-		"predictive": {
+		"fix-early-clicks": {
 			"type": "bool",
 			"name": "Fix Early Clicks",
 			"description": "When you click, the mod quickly tests the next moment of gameplay. If the click would kill you, it holds it back (up to Max Click Delay) and clicks on the first step where you survive. Player 1 only. Can cause small stutters on heavy levels.",
