@@ -3,11 +3,11 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.2.2",
+	"version": "v1.4.1",
 	"id": "yourname.customclickbuffer",
 	"name": "Custom Click Buffer",
 	"developer": "yourname",
-	"description": "Buffers your clicks by 1-5 frames, with an experimental predictive mode that delays a click that would kill you.",
+	"description": "Buffers orb clicks by 1-5 frames, with an experimental predictive mode that delays a click that would kill you.",
 	"settings": {
 		"enabled": {
 			"type": "bool",
@@ -17,8 +17,8 @@
 		},
 		"frames": {
 			"type": "int",
-			"name": "Release Buffer Frames",
-			"description": "How many frames to keep holding after you let go (1-5).",
+			"name": "Orb Buffer Window (frames)",
+			"description": "If you click up to this many frames before touching an orb, the mod activates the orb for you (1-5). It never holds your button longer than you did.",
 			"default": 2,
 			"min": 1,
 			"max": 5,
@@ -27,13 +27,13 @@
 		"player2": {
 			"type": "bool",
 			"name": "Buffer Player 2",
-			"description": "Also buffer releases for player 2 (dual mode).",
+			"description": "Also buffer orb clicks for player 2 (dual mode).",
 			"default": true
 		},
 		"show-hud": {
 			"type": "bool",
 			"name": "Show On-Screen Feedback",
-			"description": "Shows a small readout in the top-left of the level: what the mod just did, plus running counts.",
+			"description": "Shows a small readout in the bottom-left of the level: what the mod just did, plus running counts.",
 			"default": true
 		},
 		"predictive": {
@@ -55,7 +55,7 @@
 			"type": "int",
 			"name": "Look-ahead (frames)",
 			"description": "How far into the future each test run simulates. Higher = safer but slower.",
-			"default": 20,
+			"default": 10,
 			"min": 5,
 			"max": 60,
 			"control": { "slider": true }
@@ -64,7 +64,7 @@
 			"type": "int",
 			"name": "Assumed Hold (frames)",
 			"description": "In the test run, assume you hold the click this long before letting go.",
-			"default": 6,
+			"default": 3,
 			"min": 1,
 			"max": 30,
 			"control": { "slider": true }
