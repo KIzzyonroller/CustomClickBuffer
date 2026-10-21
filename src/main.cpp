@@ -49,6 +49,11 @@ namespace {
     };
     PendingPress g_press;
 
+    // ---- what YOU are physically doing (player 1) ----
+    bool g_userHolding = false;
+    bool g_userFlag = false;
+    int g_stuckFixes = 0;
+
     // ---- simulation state ----
     bool g_simulating = false;
     bool g_simDied = false;
@@ -65,6 +70,7 @@ namespace {
     // ---- counters shown on screen ----
     int g_orbCount = 0;
     int g_delayedCount = 0;
+    int g_cancelCount = 0;
     int g_unsavableCount = 0;
 
     bool modeAllowed(PlayerObject* p) {
@@ -114,12 +120,12 @@ namespace {
         bool predictive = mod->getSettingValue<bool>("fix-early-clicks");
 
         label->setString(fmt::format(
-            "{} {} | fix early clicks {} | window {}f | buffered {} | saved {} | fail {}",
+            "{} {} | fix bad clicks {} | window {}f | buffered {} | delayed {} | cancelled {} | fail {} | unstuck {}",
             Mod::get()->getVersion().toVString(),
             enabled ? "ON" : "OFF",
             predictive ? "ON" : "OFF",
             intSetting("frames", 1, 5),
-            g_orbCount, g_delayedCount, g_unsavableCount
+            g_orbCount, g_delayedCount, g_cancelCount, g_unsavableCount, g_stuckFixes
         ).c_str());
     }
 
@@ -249,9 +255,10 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
     // Decide how many ticks to delay the click. 0 = fire now.
     // foundOut = whether any tested delay survives. framesOut = chosen delay in frames
     // (-1 = test too heavy, -2 = skipped because clicks came too fast).
-    int chooseDelayTicks(float dt, bool& foundOut, float& framesOut) {
+    int chooseDelayTicks(float dt, bool& foundOut, float& framesOut, bool& cancelOut) {
         foundOut = true;
         framesOut = 0.f;
+        cancelOut = false;
 
         auto pl = PlayLayer::get();
         if (!pl || m_player1->m_isDead) return 0;
@@ -273,6 +280,12 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         int holdTicks = std::max(1, static_cast<int>(std::lround(intSetting("pred-hold-ms", 10, 300) / 1000.f / dt)));
         int stride    = std::max(1, maxDelay / 4); // at most ~5 tests per click
 
+        // What to do with a click that would kill you.
+        auto mode = Mod::get()->getSettingValue<std::string>("bad-click-mode");
+        bool allowDelay  = mode != "Cancel only";
+        bool allowCancel = mode != "Delay only";
+        if (!allowDelay) maxDelay = 0; // only test the click as-is
+
         CheckpointObject* cp = pl->createCheckpoint();
         if (!cp) return 0;
         cp->retain();
@@ -291,6 +304,14 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
             }
         }
 
+        // Nothing worked: would you live if you hadn't clicked at all?
+        bool cancelSafe = false;
+        if (!found && allowCancel && !g_budgetHit) {
+            pl->loadFromCheckpoint(cp);
+            // A delay longer than the test means the click never happens.
+            cancelSafe = runSimulation(lookTicks + 1, lookTicks, holdTicks, dt, budget);
+        }
+
         pl->loadFromCheckpoint(cp); // put the real game back
         g_simulating = false;
         cp->release();
@@ -301,6 +322,12 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         if (g_budgetHit) {
             foundOut = true;
             framesOut = -1.f;
+            return 0;
+        }
+
+        if (!found && cancelSafe) {
+            cancelOut = true;
+            foundOut = true;
             return 0;
         }
 
@@ -322,6 +349,10 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
             return GJBaseGameLayer::handleButton(down, button, isPlayer1);
         }
         bool slotP1 = controlsPlayer1(isPlayer1);
+        if (slotP1) {
+            if (down) { g_userHolding = true; g_userFlag = isPlayer1; }
+            else if (isPlayer1 == g_userFlag) { g_userHolding = false; }
+        }
         if (!slotP1 && !mod->getSettingValue<bool>("player2")) {
             return GJBaseGameLayer::handleButton(down, button, isPlayer1);
         }
@@ -394,6 +425,31 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         g_lastHalfTick = isHalfTick;
         g_lastLastTick = isLastTick;
 
+        // Safety net: if you are NOT holding the button and the mod isn't in
+        // the middle of a click, the player must not be holding either.
+        // This stops any stuck press (from a test run or anything else).
+        if (Mod::get()->getSettingValue<bool>("enabled")
+            && !g_userHolding && !g_press.requested && !g_p1.active) {
+            auto heldDown = [](PlayerObject* p) {
+                if (!p) return false;
+                auto it = p->m_holdingButtons.find(JUMP_BUTTON);
+                return it != p->m_holdingButtons.end() && it->second;
+            };
+            bool stuck = heldDown(m_player1)
+                || (m_gameState.m_isDualMode && heldDown(m_player2)
+                    && !(m_levelSettings && m_levelSettings->m_twoPlayerMode));
+            if (stuck) {
+                g_stuckFixes++;
+                log::info("DIAG: stuck press detected, releasing (flag={}, fix #{})", g_userFlag, g_stuckFixes);
+                GJBaseGameLayer::handleButton(false, JUMP_BUTTON, g_userFlag);
+                if (heldDown(m_player1)) {
+                    // Still held: try the other flag too.
+                    GJBaseGameLayer::handleButton(false, JUMP_BUTTON, !g_userFlag);
+                    log::info("DIAG: needed the other flag to release");
+                }
+            }
+        }
+
         // Short releases we owe the game after an orb click
         auto tickRelease = [&](PendingRelease& pending) {
             if (!pending.active) return;
@@ -445,9 +501,17 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
             if (!g_press.scheduled) {
                 bool found = true;
                 float frames = 0.f;
-                int delayTicks = chooseDelayTicks(dt, found, frames);
+                bool cancel = false;
+                int delayTicks = chooseDelayTicks(dt, found, frames, cancel);
 
-                if (frames == -1.f) {
+                if (cancel) {
+                    // Your click would have killed you: throw it away.
+                    // (Your release still reaches the game; releasing an
+                    // un-pressed button does nothing.)
+                    g_press = {};
+                    g_cancelCount++;
+                    showHud("CLICK CANCELLED - SAVED!", COL_SAVED);
+                } else if (frames == -1.f) {
                     showHud("TEST TOO HEAVY - SKIPPED", COL_FAIL);
                 } else if (frames == -2.f) {
                     // clicked again too quickly: pass through silently
@@ -461,7 +525,9 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
                     showHud("CLICK SAFE", COL_SAFE);
                 }
 
-                if (delayTicks <= 0) {
+                if (cancel) {
+                    // nothing to send
+                } else if (delayTicks <= 0) {
                     deliverPress();
                 } else {
                     g_press.scheduled = true;
@@ -486,7 +552,9 @@ class $modify(BufferPlayLayer, PlayLayer) {
 
         g_orbCount = 0;
         g_delayedCount = 0;
+        g_cancelCount = 0;
         g_unsavableCount = 0;
+        g_stuckFixes = 0;
         clearAll();
 
         if (!m_uiLayer) return;
