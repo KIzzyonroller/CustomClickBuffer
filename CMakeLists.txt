@@ -7,6 +7,10 @@ set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 project(CustomClickBuffer VERSION 1.0.0)
 
 file(GLOB SOURCES src/*.cpp)
+list(LENGTH SOURCES SOURCE_COUNT)
+if (SOURCE_COUNT EQUAL 0)
+    message(FATAL_ERROR "No .cpp files found in src/ - your code must be at src/main.cpp")
+endif()
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
 
 if (NOT DEFINED ENV{GEODE_SDK})
