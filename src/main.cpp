@@ -108,13 +108,14 @@ namespace {
 
         auto mod = Mod::get();
         bool enabled = mod->getSettingValue<bool>("enabled");
-        bool predictive = mod->getSettingValue<bool>("predictive");
+        bool predictive = mod->getSettingValue<bool>("fix-early-clicks");
 
         label->setString(fmt::format(
-            "{} | window {}f | pred {} | buffered {} | saved {} | fail {}",
+            "{} {} | fix early clicks {} | window {}f | buffered {} | saved {} | fail {}",
+            Mod::get()->getVersion().toVString(),
             enabled ? "ON" : "OFF",
-            intSetting("frames", 1, 5),
             predictive ? "ON" : "OFF",
+            intSetting("frames", 1, 5),
             g_orbCount, g_delayedCount, g_unsavableCount
         ).c_str());
     }
@@ -300,6 +301,10 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         }
 
         auto mod = Mod::get();
+        log::info("DIAG: click down={} button={} p1={} fixEarly={} inLevel={}",
+            down, button, isPlayer1,
+            mod->getSettingValue<bool>("fix-early-clicks"),
+            PlayLayer::get() != nullptr);
         if (!mod->getSettingValue<bool>("enabled") || button != JUMP_BUTTON) {
             return GJBaseGameLayer::handleButton(down, button, isPlayer1);
         }
@@ -311,7 +316,7 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         auto* player = isPlayer1 ? m_player1 : m_player2;
 
         bool predictive = isPlayer1
-            && mod->getSettingValue<bool>("predictive")
+            && mod->getSettingValue<bool>("fix-early-clicks")
             && PlayLayer::get() != nullptr
             && modeAllowed(player);
 
