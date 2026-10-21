@@ -23,6 +23,7 @@ namespace {
         float total = 0.f;     // seconds, full window
         float timeLeft = 0.f;  // seconds
         bool waitForGround = false; // click was wasted in the air: fire on landing
+        bool flag = true;           // the game's input flag to replay with
     };
     OrbWindow g_win1;
     OrbWindow g_win2;
@@ -31,6 +32,7 @@ namespace {
     struct PendingRelease {
         bool active = false;
         float timeLeft = 0.f; // seconds
+        bool flag = true;     // the game's input flag to replay with
     };
     PendingRelease g_p1;
     PendingRelease g_p2;
@@ -43,6 +45,7 @@ namespace {
         float heldFor = 0.f;    // how long you've been holding this click
         bool releaseQueued = false; // you let go before we fired it
         float holdDuration = 0.f;   // how long you actually held it
+        bool flag = true;           // the game's input flag to replay with
     };
     PendingPress g_press;
 
@@ -159,12 +162,20 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
     }
 
     // Called with the game state from BEFORE the click is applied.
-    void noteClick(bool isPlayer1) {
-        auto* player = isPlayer1 ? m_player1 : m_player2;
+    // In a normal (non two-player) level, every click controls player 1,
+    // whatever flag the game sends with it.
+    bool controlsPlayer1(bool flag) {
+        bool twoPlayer = m_levelSettings && m_levelSettings->m_twoPlayerMode;
+        return flag || !twoPlayer;
+    }
+
+    void noteClick(bool slotP1, bool flag) {
+        auto* player = slotP1 ? m_player1 : m_player2;
         if (!player || !modeAllowed(player)) return;
 
-        auto& win = isPlayer1 ? g_win1 : g_win2;
+        auto& win = slotP1 ? g_win1 : g_win2;
         win.active = true;
+        win.flag = flag;
         win.total = static_cast<float>(intSetting("frames", 1, 5)) * frameSeconds();
         win.timeLeft = win.total;
 
@@ -189,14 +200,16 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
     void deliverPress() {
         bool releaseQueued = g_press.releaseQueued;
         float holdDuration = g_press.holdDuration;
+        bool flag = g_press.flag;
         g_press = {};
-        noteClick(true);
-        GJBaseGameLayer::handleButton(true, JUMP_BUTTON, true);
+        noteClick(true, flag);
+        GJBaseGameLayer::handleButton(true, JUMP_BUTTON, flag);
 
         // You already let go: release after the same hold time you used.
         if (releaseQueued) {
             g_p1.active = true;
             g_p1.timeLeft = std::max(holdDuration, 0.0001f);
+            g_p1.flag = flag;
         }
     }
 
@@ -209,11 +222,11 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
 
         for (int t = 0; t < lookTicks; ++t) {
             if (!pressed && t >= delayTicks) {
-                GJBaseGameLayer::handleButton(true, JUMP_BUTTON, true);
+                GJBaseGameLayer::handleButton(true, JUMP_BUTTON, g_press.flag);
                 pressed = true;
             }
             if (pressed && !released && t >= delayTicks + holdTicks) {
-                GJBaseGameLayer::handleButton(false, JUMP_BUTTON, true);
+                GJBaseGameLayer::handleButton(false, JUMP_BUTTON, g_press.flag);
                 released = true;
             }
             if (--budget < 0) {
@@ -227,7 +240,7 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         // restore does NOT reset input, so a leftover press would stay held
         // in the real game and make you keep jumping.
         if (pressed && !released) {
-            GJBaseGameLayer::handleButton(false, JUMP_BUTTON, true);
+            GJBaseGameLayer::handleButton(false, JUMP_BUTTON, g_press.flag);
         }
         if (g_budgetHit) return true;
         return !g_simDied;
@@ -308,14 +321,15 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         if (!mod->getSettingValue<bool>("enabled") || button != JUMP_BUTTON) {
             return GJBaseGameLayer::handleButton(down, button, isPlayer1);
         }
-        if (!isPlayer1 && !mod->getSettingValue<bool>("player2")) {
+        bool slotP1 = controlsPlayer1(isPlayer1);
+        if (!slotP1 && !mod->getSettingValue<bool>("player2")) {
             return GJBaseGameLayer::handleButton(down, button, isPlayer1);
         }
 
-        auto& pendingRel = isPlayer1 ? g_p1 : g_p2;
-        auto* player = isPlayer1 ? m_player1 : m_player2;
+        auto& pendingRel = slotP1 ? g_p1 : g_p2;
+        auto* player = slotP1 ? m_player1 : m_player2;
 
-        bool predictive = isPlayer1
+        bool predictive = slotP1
             && mod->getSettingValue<bool>("fix-early-clicks")
             && PlayLayer::get() != nullptr
             && modeAllowed(player);
@@ -324,28 +338,32 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
             // If we still owe the game a short release from an orb click, send it first.
             if (pendingRel.active) {
                 pendingRel.active = false;
-                GJBaseGameLayer::handleButton(false, button, isPlayer1);
+                GJBaseGameLayer::handleButton(false, button, pendingRel.flag);
             }
 
             if (predictive) {
                 // A second click while one is still held back: let the first one out.
                 if (g_press.requested) {
+                    bool oldFlag = g_press.flag;
                     g_press.releaseQueued = false;
                     deliverPress();
-                    GJBaseGameLayer::handleButton(false, button, isPlayer1);
+                    GJBaseGameLayer::handleButton(false, button, oldFlag);
                 }
                 // Hold this click back; chooseDelayTicks() runs at the next tick.
                 g_press.requested = true;
                 g_press.scheduled = false;
+                g_press.flag = isPlayer1;
                 return;
             }
 
-            noteClick(isPlayer1);
+            noteClick(slotP1, isPlayer1);
             return GJBaseGameLayer::handleButton(true, button, isPlayer1);
         }
 
         // ---- release: always passed straight through (never delayed) ----
-        if (isPlayer1 && g_press.requested) {
+        // (Only the release that matches the held-back click; the game also
+        // sends stray releases with the other flag, which we pass through.)
+        if (slotP1 && g_press.requested && isPlayer1 == g_press.flag) {
             // The click hasn't been sent yet. Remember the release and send
             // it after the delayed click, with the same hold length.
             g_press.releaseQueued = true;
@@ -377,16 +395,16 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         g_lastLastTick = isLastTick;
 
         // Short releases we owe the game after an orb click
-        auto tickRelease = [&](PendingRelease& pending, bool isPlayer1) {
+        auto tickRelease = [&](PendingRelease& pending) {
             if (!pending.active) return;
             pending.timeLeft -= dt;
             if (pending.timeLeft <= 0.f) {
                 pending.active = false;
-                GJBaseGameLayer::handleButton(false, JUMP_BUTTON, isPlayer1);
+                GJBaseGameLayer::handleButton(false, JUMP_BUTTON, pending.flag);
             }
         };
-        tickRelease(g_p1, true);
-        tickRelease(g_p2, false);
+        tickRelease(g_p1);
+        tickRelease(g_p2);
 
         // Orb buffer: did you click shortly before touching a NEW orb?
         auto orbCheck = [&](OrbWindow& win, bool isPlayer1) {
@@ -409,10 +427,11 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
             if (holding) return;
 
             float earlyFrames = (win.total - win.timeLeft) / std::max(frameSeconds(), 0.0001f);
-            GJBaseGameLayer::handleButton(true, JUMP_BUTTON, isPlayer1);
+            GJBaseGameLayer::handleButton(true, JUMP_BUTTON, win.flag);
             auto& rel = isPlayer1 ? g_p1 : g_p2;
             rel.active = true;
             rel.timeLeft = dt; // let go on the very next step
+            rel.flag = win.flag;
 
             g_orbCount++;
             showHud(fmt::format("{} BUFFERED ({:.1f}f early)", orb ? "ORB" : "JUMP", earlyFrames), COL_ORB);
