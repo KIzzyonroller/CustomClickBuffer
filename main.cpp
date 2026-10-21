@@ -1,8 +1,14 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/ui/Notification.hpp>
 
 using namespace geode::prelude;
+
+// Diagnostic: proves the mod's code is running at all.
+$on_mod(Loaded) {
+    log::info("DIAG: Custom Click Buffer code loaded, v{}", Mod::get()->getVersion().toVString());
+}
 
 namespace {
     constexpr int JUMP_BUTTON = 1; // 1 = jump, 2 = left, 3 = right
@@ -192,6 +198,9 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
     }
 
     void handleButton(bool down, int button, bool isPlayer1) {
+        if (!g_simulating) {
+            log::info("DIAG: handleButton hook fired down={} button={} p1={}", down, button, isPlayer1);
+        }
         // Our own simulation calls come straight through.
         if (g_simulating) {
             return GJBaseGameLayer::handleButton(down, button, isPlayer1);
@@ -264,6 +273,12 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
             return GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
         }
 
+        static bool loggedOnce = false;
+        if (!loggedOnce) {
+            loggedOnce = true;
+            log::info("DIAG: processCommands hook is running (dt={})", dt);
+        }
+
         g_lastDt = dt;
         g_lastHalfTick = isHalfTick;
         g_lastLastTick = isLastTick;
@@ -318,6 +333,9 @@ class $modify(BufferPlayLayer, PlayLayer) {
     void setupHasCompleted() {
         PlayLayer::setupHasCompleted();
 
+        log::info("DIAG: setupHasCompleted hook fired, uiLayer={}", m_uiLayer != nullptr);
+        Notification::create("Click Buffer loaded", NotificationIcon::Success, 2.f)->show();
+
         g_heldCount = 0;
         g_delayedCount = 0;
         g_unsavableCount = 0;
@@ -337,8 +355,8 @@ class $modify(BufferPlayLayer, PlayLayer) {
         stats->setID("click-hud-stats"_spr);
         stats->setAnchorPoint({0.f, 1.f});
         stats->setPosition({8.f, win.height - 30.f});
-        stats->setScale(0.25f);
-        stats->setOpacity(140);
+        stats->setScale(0.35f);
+        stats->setOpacity(220);
         m_uiLayer->addChild(stats, 100);
 
         if (Mod::get()->getSettingValue<bool>("show-hud")) {
