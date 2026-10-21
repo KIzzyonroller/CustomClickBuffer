@@ -22,6 +22,7 @@ namespace {
         bool active = false;
         float total = 0.f;     // seconds, full window
         float timeLeft = 0.f;  // seconds
+        bool waitForGround = false; // click was wasted in the air: fire on landing
     };
     OrbWindow g_win1;
     OrbWindow g_win2;
@@ -107,7 +108,7 @@ namespace {
         bool predictive = mod->getSettingValue<bool>("predictive");
 
         label->setString(fmt::format(
-            "{} | window {}f | pred {} | orb {} | saved {} | fail {}",
+            "{} | window {}f | pred {} | buffered {} | saved {} | fail {}",
             enabled ? "ON" : "OFF",
             intSetting("frames", 1, 5),
             predictive ? "ON" : "OFF",
@@ -147,6 +148,13 @@ namespace {
 class $modify(BufferGJBGL, GJBaseGameLayer) {
 
     // Open the orb-buffer window for a click that is really being applied.
+    // Modes where a click only does something while on the ground.
+    static bool isGroundMode(PlayerObject* p) {
+        return !p->m_isShip && !p->m_isBird && !p->m_isDart && !p->m_isSwing;
+        // = cube, ball, robot, spider
+    }
+
+    // Called with the game state from BEFORE the click is applied.
     void noteClick(bool isPlayer1) {
         auto* player = isPlayer1 ? m_player1 : m_player2;
         if (!player || !modeAllowed(player)) return;
@@ -155,6 +163,12 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         win.active = true;
         win.total = static_cast<float>(intSetting("frames", 1, 5)) * frameSeconds();
         win.timeLeft = win.total;
+
+        // Only buffer a landing if this click is about to be wasted:
+        // a ground mode, in the air, and not touching an orb.
+        win.waitForGround = isGroundMode(player)
+            && !player->m_isOnGround
+            && !touchingUnusedOrb(player);
     }
 
     // Is the player overlapping an orb it hasn't used yet?
@@ -362,7 +376,9 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
             win.timeLeft -= dt;
             if (win.timeLeft <= 0.f) { win.active = false; return; }
 
-            if (!touchingUnusedOrb(player)) return;
+            bool orb = touchingUnusedOrb(player);
+            bool landed = win.waitForGround && player->m_isOnGround;
+            if (!orb && !landed) return;
 
             win.active = false; // one orb click per click
 
@@ -378,7 +394,7 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
             rel.timeLeft = dt; // let go on the very next step
 
             g_orbCount++;
-            showHud(fmt::format("ORB BUFFERED ({:.1f}f early)", earlyFrames), COL_ORB);
+            showHud(fmt::format("{} BUFFERED ({:.1f}f early)", orb ? "ORB" : "JUMP", earlyFrames), COL_ORB);
         };
         orbCheck(g_win1, true);
         orbCheck(g_win2, false);
