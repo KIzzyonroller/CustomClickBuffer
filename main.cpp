@@ -30,6 +30,11 @@ namespace {
     bool g_lastHalfTick = false;
     bool g_lastLastTick = true;
 
+    // ---- counters shown on screen ----
+    int g_heldCount = 0;
+    int g_delayedCount = 0;
+    int g_unsavableCount = 0;
+
     bool modeAllowed(PlayerObject* p) {
         auto mod = Mod::get();
         if (!p) return false;
@@ -57,6 +62,59 @@ namespace {
         g_p2 = {};
         g_press = {};
     }
+
+    // ---------------- on-screen feedback ----------------
+
+    CCLabelBMFont* findLabel(std::string const& id) {
+        auto pl = PlayLayer::get();
+        if (!pl || !pl->m_uiLayer) return nullptr;
+        return typeinfo_cast<CCLabelBMFont*>(pl->m_uiLayer->getChildByID(id));
+    }
+
+    void refreshStats() {
+        auto label = findLabel("click-hud-stats"_spr);
+        if (!label) return;
+
+        auto mod = Mod::get();
+        bool enabled = mod->getSettingValue<bool>("enabled");
+        bool predictive = mod->getSettingValue<bool>("predictive");
+
+        label->setString(fmt::format(
+            "{} | release buffer {}f | predictive {} | held {} | delayed {} | unsavable {}",
+            enabled ? "MOD ON" : "MOD OFF",
+            intSetting("frames", 1, 5),
+            predictive ? "ON" : "OFF",
+            g_heldCount, g_delayedCount, g_unsavableCount
+        ).c_str());
+    }
+
+    // Flash a short message in the top-left and log it.
+    void showHud(std::string const& text, ccColor3B color) {
+        if (g_simulating) return; // never report from inside a test run
+        log::info("{}", text);
+
+        if (!Mod::get()->getSettingValue<bool>("show-hud")) return;
+
+        refreshStats();
+
+        auto label = findLabel("click-hud-msg"_spr);
+        if (!label) return;
+
+        label->setString(text.c_str());
+        label->setColor(color);
+        label->stopAllActions();
+        label->setOpacity(255);
+        label->runAction(CCSequence::create(
+            CCDelayTime::create(0.9f),
+            CCFadeTo::create(0.35f, 0),
+            nullptr
+        ));
+    }
+
+    constexpr ccColor3B COL_RELEASE = {80, 220, 255};
+    constexpr ccColor3B COL_SAFE    = {255, 255, 255};
+    constexpr ccColor3B COL_SAVED   = {90, 255, 120};
+    constexpr ccColor3B COL_FAIL    = {255, 90, 90};
 }
 
 class $modify(BufferGJBGL, GJBaseGameLayer) {
@@ -90,7 +148,11 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
     }
 
     // Decide how many ticks to delay the click. 0 = fire now.
-    int chooseDelayTicks(float dt) {
+    // foundOut = whether any tested delay survives. framesOut = chosen delay in frames.
+    int chooseDelayTicks(float dt, bool& foundOut, float& framesOut) {
+        foundOut = true;
+        framesOut = 0.f;
+
         auto pl = PlayLayer::get();
         if (!pl || m_player1->m_isDead) return 0;
 
@@ -121,6 +183,9 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         pl->loadFromCheckpoint(cp); // put the real game back
         g_simulating = false;
         cp->release();
+
+        foundOut = found;
+        framesOut = static_cast<float>(chosen) / static_cast<float>(ticksPerFrame);
 
         // If no delay saves you, don't interfere: your click goes through as normal.
         return found ? chosen : 0;
@@ -180,8 +245,12 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         }
         if (pending.active) return;
 
+        int frames = intSetting("frames", 1, 5);
         pending.active = true;
-        pending.timeLeft = static_cast<float>(intSetting("frames", 1, 5)) * frameSeconds();
+        pending.timeLeft = static_cast<float>(frames) * frameSeconds();
+
+        g_heldCount++;
+        showHud(fmt::format("RELEASE HELD +{}f", frames), COL_RELEASE);
     }
 
     // Don't let the simulation eat the real queued inputs.
@@ -214,7 +283,20 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         // Held-back press
         if (g_press.requested) {
             if (!g_press.scheduled) {
-                int delayTicks = chooseDelayTicks(dt);
+                bool found = true;
+                float frames = 0.f;
+                int delayTicks = chooseDelayTicks(dt, found, frames);
+
+                if (!found) {
+                    g_unsavableCount++;
+                    showHud("CAN'T SAVE THIS CLICK", COL_FAIL);
+                } else if (delayTicks > 0) {
+                    g_delayedCount++;
+                    showHud(fmt::format("CLICK DELAYED {:.1f}f - SAVED!", frames), COL_SAVED);
+                } else {
+                    showHud("CLICK SAFE", COL_SAFE);
+                }
+
                 if (delayTicks <= 0) {
                     deliverPress();
                 } else {
@@ -232,6 +314,40 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
 };
 
 class $modify(BufferPlayLayer, PlayLayer) {
+    // Build the on-screen readout once the level has loaded.
+    void setupHasCompleted() {
+        PlayLayer::setupHasCompleted();
+
+        g_heldCount = 0;
+        g_delayedCount = 0;
+        g_unsavableCount = 0;
+
+        if (!m_uiLayer) return;
+        auto win = CCDirector::get()->getWinSize();
+
+        auto msg = CCLabelBMFont::create("", "bigFont.fnt");
+        msg->setID("click-hud-msg"_spr);
+        msg->setAnchorPoint({0.f, 1.f});
+        msg->setPosition({8.f, win.height - 8.f});
+        msg->setScale(0.45f);
+        msg->setOpacity(0);
+        m_uiLayer->addChild(msg, 100);
+
+        auto stats = CCLabelBMFont::create("", "bigFont.fnt");
+        stats->setID("click-hud-stats"_spr);
+        stats->setAnchorPoint({0.f, 1.f});
+        stats->setPosition({8.f, win.height - 30.f});
+        stats->setScale(0.25f);
+        stats->setOpacity(140);
+        m_uiLayer->addChild(stats, 100);
+
+        if (Mod::get()->getSettingValue<bool>("show-hud")) {
+            refreshStats();
+        } else {
+            stats->setVisible(false);
+        }
+    }
+
     // While simulating, a "death" is only a prediction, not a real death.
     void destroyPlayer(PlayerObject* player, GameObject* object) {
         if (g_simulating) {
