@@ -40,6 +40,9 @@ namespace {
         bool requested = false; // a click is being held back
         bool scheduled = false; // the delay has been decided
         float timeLeft = 0.f;   // seconds until we fire it
+        float heldFor = 0.f;    // how long you've been holding this click
+        bool releaseQueued = false; // you let go before we fired it
+        float holdDuration = 0.f;   // how long you actually held it
     };
     PendingPress g_press;
 
@@ -51,7 +54,7 @@ namespace {
     bool g_lastLastTick = true;
 
     // Safety limits for the predictive mode
-    constexpr int MAX_SIM_TICKS = 400;      // hard cap on simulated steps per click
+    constexpr int MAX_SIM_TICKS = 600;      // hard cap on simulated steps per click
     constexpr double MIN_SIM_GAP_MS = 40.0; // don't run tests more often than this
     bool g_budgetHit = false;
     std::chrono::steady_clock::time_point g_lastSim = {};
@@ -183,9 +186,17 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
 
     // Send the held-back click to the game for real.
     void deliverPress() {
+        bool releaseQueued = g_press.releaseQueued;
+        float holdDuration = g_press.holdDuration;
         g_press = {};
         noteClick(true);
         GJBaseGameLayer::handleButton(true, JUMP_BUTTON, true);
+
+        // You already let go: release after the same hold time you used.
+        if (releaseQueued) {
+            g_p1.active = true;
+            g_p1.timeLeft = std::max(holdDuration, 0.0001f);
+        }
     }
 
     // Play the near future with the click happening after `delayTicks`.
@@ -242,11 +253,11 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         g_budgetHit = false;
 
         float frame = frameSeconds();
-        int ticksPerFrame = std::max(1, static_cast<int>(std::lround(frame / dt)));
-        int maxDelay  = intSetting("pred-delay", 1, 5) * ticksPerFrame;
-        int lookTicks = intSetting("pred-lookahead", 5, 60) * ticksPerFrame;
-        int holdTicks = intSetting("pred-hold", 1, 30) * ticksPerFrame;
-        int stride    = std::max(1, ticksPerFrame); // one test per frame
+        // Delay window in physics steps (at least 1).
+        int maxDelay  = std::max(1, static_cast<int>(std::lround(intSetting("pred-delay", 1, 5) * frame / dt)));
+        int lookTicks = std::max(1, static_cast<int>(std::lround(intSetting("pred-look-ms", 100, 600) / 1000.f / dt)));
+        int holdTicks = std::max(1, static_cast<int>(std::lround(intSetting("pred-hold-ms", 10, 300) / 1000.f / dt)));
+        int stride    = std::max(1, maxDelay / 4); // at most ~5 tests per click
 
         CheckpointObject* cp = pl->createCheckpoint();
         if (!cp) return 0;
@@ -271,7 +282,7 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         cp->release();
 
         foundOut = found;
-        framesOut = static_cast<float>(chosen) / static_cast<float>(ticksPerFrame);
+        framesOut = static_cast<float>(chosen) * dt / std::max(frame, 0.0001f);
 
         if (g_budgetHit) {
             foundOut = true;
@@ -314,6 +325,7 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
             if (predictive) {
                 // A second click while one is still held back: let the first one out.
                 if (g_press.requested) {
+                    g_press.releaseQueued = false;
                     deliverPress();
                     GJBaseGameLayer::handleButton(false, button, isPlayer1);
                 }
@@ -329,7 +341,11 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
 
         // ---- release: always passed straight through (never delayed) ----
         if (isPlayer1 && g_press.requested) {
-            deliverPress(); // the click was still held back; send it so the release has something to end
+            // The click hasn't been sent yet. Remember the release and send
+            // it after the delayed click, with the same hold length.
+            g_press.releaseQueued = true;
+            g_press.holdDuration = g_press.heldFor;
+            return;
         }
         return GJBaseGameLayer::handleButton(false, button, isPlayer1);
     }
@@ -401,6 +417,7 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
 
         // Held-back press (predictive mode)
         if (g_press.requested) {
+            if (!g_press.releaseQueued) g_press.heldFor += dt;
             if (!g_press.scheduled) {
                 bool found = true;
                 float frames = 0.f;
