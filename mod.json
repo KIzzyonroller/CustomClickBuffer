@@ -3,43 +3,73 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.0.0",
+	"version": "v1.1.0",
 	"id": "yourname.customclickbuffer",
 	"name": "Custom Click Buffer",
 	"developer": "yourname",
-	"description": "Buffers your clicks by 1-5 frames, with per-gamemode settings.",
+	"description": "Buffers your clicks by 1-5 frames, with an experimental predictive mode that delays a click that would kill you.",
 	"settings": {
 		"enabled": {
 			"type": "bool",
 			"name": "Enabled",
-			"description": "Turn the buffer on or off.",
+			"description": "Turn the whole mod on or off.",
 			"default": true
 		},
 		"frames": {
 			"type": "int",
-			"name": "Buffer Frames",
-			"description": "How many frames to hold a click for after you release (1-5).",
+			"name": "Release Buffer Frames",
+			"description": "How many frames to keep holding after you let go (1-5).",
 			"default": 2,
 			"min": 1,
 			"max": 5,
-			"control": {
-				"slider": true,
-				"arrow-buttons": true
-			}
+			"control": { "slider": true, "arrow-buttons": true }
 		},
 		"player2": {
 			"type": "bool",
 			"name": "Buffer Player 2",
-			"description": "Also buffer clicks for player 2 (dual mode).",
+			"description": "Also buffer releases for player 2 (dual mode).",
 			"default": true
+		},
+		"predictive": {
+			"type": "bool",
+			"name": "Predictive Press (EXPERIMENTAL)",
+			"description": "When you click, simulate the next moments. If the click would kill you, hold it back up to the delay below and fire it on the first frame that survives. Can lag or glitch music. Player 1 only.",
+			"default": false
+		},
+		"pred-delay": {
+			"type": "int",
+			"name": "Max Press Delay (frames)",
+			"description": "The furthest the mod may delay a click to save you (1-5).",
+			"default": 3,
+			"min": 1,
+			"max": 5,
+			"control": { "slider": true, "arrow-buttons": true }
+		},
+		"pred-lookahead": {
+			"type": "int",
+			"name": "Look-ahead (frames)",
+			"description": "How far into the future each test run simulates. Higher = safer but slower.",
+			"default": 20,
+			"min": 5,
+			"max": 60,
+			"control": { "slider": true, "arrow-buttons": true }
+		},
+		"pred-hold": {
+			"type": "int",
+			"name": "Assumed Hold (frames)",
+			"description": "In the test run, assume you hold the click this long before letting go.",
+			"default": 6,
+			"min": 1,
+			"max": 30,
+			"control": { "slider": true, "arrow-buttons": true }
 		},
 		"mode-cube":   { "type": "bool", "name": "Cube",   "default": true },
 		"mode-ball":   { "type": "bool", "name": "Ball",   "default": true },
 		"mode-ufo":    { "type": "bool", "name": "UFO",    "default": true },
 		"mode-robot":  { "type": "bool", "name": "Robot",  "default": true },
 		"mode-spider": { "type": "bool", "name": "Spider", "default": true },
-		"mode-ship":   { "type": "bool", "name": "Ship",   "description": "Delays releases while flying. Usually best left off.", "default": false },
-		"mode-wave":   { "type": "bool", "name": "Wave",   "description": "Delays releases in wave. Usually best left off.", "default": false },
+		"mode-ship":   { "type": "bool", "name": "Ship",   "description": "Usually best left off.", "default": false },
+		"mode-wave":   { "type": "bool", "name": "Wave",   "description": "Usually best left off.", "default": false },
 		"mode-swing":  { "type": "bool", "name": "Swing",  "default": false }
 	}
 }
