@@ -52,6 +52,8 @@ namespace {
     // ---- what YOU are physically doing (player 1) ----
     bool g_userHolding = false;
     bool g_userFlag = false;
+    bool g_swallowRepeats = false; // after a cancelled click, ignore repeats until you let go
+    int g_repeatCount = 0;
     int g_stuckFixes = 0;
 
     // ---- simulation state ----
@@ -341,17 +343,29 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         }
 
         auto mod = Mod::get();
-        log::info("DIAG: click down={} button={} p1={} fixEarly={} inLevel={}",
-            down, button, isPlayer1,
-            mod->getSettingValue<bool>("fix-early-clicks"),
-            PlayLayer::get() != nullptr);
         if (!mod->getSettingValue<bool>("enabled") || button != JUMP_BUTTON) {
             return GJBaseGameLayer::handleButton(down, button, isPlayer1);
         }
         bool slotP1 = controlsPlayer1(isPlayer1);
+
+        // While you hold the button, the game keeps re-sending "pressed".
+        // Those are NOT new clicks: never test or buffer them.
+        if (slotP1 && down && g_userHolding && isPlayer1 == g_userFlag) {
+            g_repeatCount++;
+            if (g_swallowRepeats || g_press.requested) return; // click is cancelled / still held back
+            return GJBaseGameLayer::handleButton(down, button, isPlayer1);
+        }
+
+        log::info("DIAG: click down={} button={} p1={} fixEarly={} (repeats so far {})",
+            down, button, isPlayer1,
+            mod->getSettingValue<bool>("fix-early-clicks"), g_repeatCount);
+
         if (slotP1) {
             if (down) { g_userHolding = true; g_userFlag = isPlayer1; }
-            else if (isPlayer1 == g_userFlag) { g_userHolding = false; }
+            else if (isPlayer1 == g_userFlag) {
+                g_userHolding = false;
+                g_swallowRepeats = false;
+            }
         }
         if (!slotP1 && !mod->getSettingValue<bool>("player2")) {
             return GJBaseGameLayer::handleButton(down, button, isPlayer1);
@@ -508,7 +522,9 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
                     // Your click would have killed you: throw it away.
                     // (Your release still reaches the game; releasing an
                     // un-pressed button does nothing.)
+                    bool stillHolding = !g_press.releaseQueued;
                     g_press = {};
+                    g_swallowRepeats = stillHolding;
                     g_cancelCount++;
                     showHud("CLICK CANCELLED - SAVED!", COL_SAVED);
                 } else if (frames == -1.f) {
