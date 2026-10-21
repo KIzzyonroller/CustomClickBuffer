@@ -3,7 +3,7 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.1.0",
+	"version": "v1.2.0",
 	"id": "yourname.customclickbuffer",
 	"name": "Custom Click Buffer",
 	"developer": "yourname",
@@ -28,6 +28,12 @@
 			"type": "bool",
 			"name": "Buffer Player 2",
 			"description": "Also buffer releases for player 2 (dual mode).",
+			"default": true
+		},
+		"show-hud": {
+			"type": "bool",
+			"name": "Show On-Screen Feedback",
+			"description": "Shows a small readout in the top-left of the level: what the mod just did, plus running counts.",
 			"default": true
 		},
 		"predictive": {
