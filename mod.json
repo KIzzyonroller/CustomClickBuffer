@@ -3,7 +3,7 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.2.1",
+	"version": "v1.2.2",
 	"id": "yourname.customclickbuffer",
 	"name": "Custom Click Buffer",
 	"developer": "yourname",
@@ -22,7 +22,7 @@
 			"default": 2,
 			"min": 1,
 			"max": 5,
-			"control": { "slider": true, "arrow-buttons": true }
+			"control": { "slider": true }
 		},
 		"player2": {
 			"type": "bool",
@@ -49,7 +49,7 @@
 			"default": 3,
 			"min": 1,
 			"max": 5,
-			"control": { "slider": true, "arrow-buttons": true }
+			"control": { "slider": true }
 		},
 		"pred-lookahead": {
 			"type": "int",
@@ -58,7 +58,7 @@
 			"default": 20,
 			"min": 5,
 			"max": 60,
-			"control": { "slider": true, "arrow-buttons": true }
+			"control": { "slider": true }
 		},
 		"pred-hold": {
 			"type": "int",
@@ -67,7 +67,7 @@
 			"default": 6,
 			"min": 1,
 			"max": 30,
-			"control": { "slider": true, "arrow-buttons": true }
+			"control": { "slider": true }
 		},
 		"mode-cube":   { "type": "bool", "name": "Cube",   "default": true },
 		"mode-ball":   { "type": "bool", "name": "Ball",   "default": true },
