@@ -2,6 +2,7 @@
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/ui/Notification.hpp>
+#include <chrono>
 
 using namespace geode::prelude;
 
@@ -13,7 +14,19 @@ $on_mod(Loaded) {
 namespace {
     constexpr int JUMP_BUTTON = 1; // 1 = jump, 2 = left, 3 = right
 
-    // ---- release buffer (delays letting go) ----
+    // ---- orb buffer ----
+    // After you click, we watch for a NEW orb to be touched within the window.
+    // If one is, we click for you on that exact step. We never hold your button
+    // longer than you did, so landing can't cause an extra jump.
+    struct OrbWindow {
+        bool active = false;
+        float total = 0.f;     // seconds, full window
+        float timeLeft = 0.f;  // seconds
+    };
+    OrbWindow g_win1;
+    OrbWindow g_win2;
+
+    // A short release we send ourselves right after an orb click.
     struct PendingRelease {
         bool active = false;
         float timeLeft = 0.f; // seconds
@@ -36,8 +49,14 @@ namespace {
     bool g_lastHalfTick = false;
     bool g_lastLastTick = true;
 
+    // Safety limits for the predictive mode
+    constexpr int MAX_SIM_TICKS = 400;      // hard cap on simulated steps per click
+    constexpr double MIN_SIM_GAP_MS = 40.0; // don't run tests more often than this
+    bool g_budgetHit = false;
+    std::chrono::steady_clock::time_point g_lastSim = {};
+
     // ---- counters shown on screen ----
-    int g_heldCount = 0;
+    int g_orbCount = 0;
     int g_delayedCount = 0;
     int g_unsavableCount = 0;
 
@@ -64,6 +83,8 @@ namespace {
     }
 
     void clearAll() {
+        g_win1 = {};
+        g_win2 = {};
         g_p1 = {};
         g_p2 = {};
         g_press = {};
@@ -86,15 +107,15 @@ namespace {
         bool predictive = mod->getSettingValue<bool>("predictive");
 
         label->setString(fmt::format(
-            "{} | release buffer {}f | predictive {} | held {} | delayed {} | unsavable {}",
-            enabled ? "MOD ON" : "MOD OFF",
+            "{} | window {}f | pred {} | orb {} | saved {} | fail {}",
+            enabled ? "ON" : "OFF",
             intSetting("frames", 1, 5),
             predictive ? "ON" : "OFF",
-            g_heldCount, g_delayedCount, g_unsavableCount
+            g_orbCount, g_delayedCount, g_unsavableCount
         ).c_str());
     }
 
-    // Flash a short message in the top-left and log it.
+    // Flash a short message and log it.
     void showHud(std::string const& text, ccColor3B color) {
         if (g_simulating) return; // never report from inside a test run
         log::info("{}", text);
@@ -117,23 +138,45 @@ namespace {
         ));
     }
 
-    constexpr ccColor3B COL_RELEASE = {80, 220, 255};
-    constexpr ccColor3B COL_SAFE    = {255, 255, 255};
-    constexpr ccColor3B COL_SAVED   = {90, 255, 120};
-    constexpr ccColor3B COL_FAIL    = {255, 90, 90};
+    constexpr ccColor3B COL_ORB   = {80, 220, 255};
+    constexpr ccColor3B COL_SAFE  = {255, 255, 255};
+    constexpr ccColor3B COL_SAVED = {90, 255, 120};
+    constexpr ccColor3B COL_FAIL  = {255, 90, 90};
 }
 
 class $modify(BufferGJBGL, GJBaseGameLayer) {
 
+    // Open the orb-buffer window for a click that is really being applied.
+    void noteClick(bool isPlayer1) {
+        auto* player = isPlayer1 ? m_player1 : m_player2;
+        if (!player || !modeAllowed(player)) return;
+
+        auto& win = isPlayer1 ? g_win1 : g_win2;
+        win.active = true;
+        win.total = static_cast<float>(intSetting("frames", 1, 5)) * frameSeconds();
+        win.timeLeft = win.total;
+    }
+
+    // Is the player overlapping an orb it hasn't used yet?
+    static bool touchingUnusedOrb(PlayerObject* player) {
+        if (!player || !player->m_touchingRings) return false;
+        for (auto obj : CCArrayExt<GameObject*>(player->m_touchingRings)) {
+            if (!obj) continue;
+            if (!player->m_touchedRings.count(obj->m_uniqueID)) return true;
+        }
+        return false;
+    }
+
     // Send the held-back click to the game for real.
     void deliverPress() {
         g_press = {};
+        noteClick(true);
         GJBaseGameLayer::handleButton(true, JUMP_BUTTON, true);
     }
 
     // Play the near future with the click happening after `delayTicks`.
     // Returns true if the player survives the whole look-ahead.
-    bool runSimulation(int delayTicks, int lookTicks, int holdTicks, float dt) {
+    bool runSimulation(int delayTicks, int lookTicks, int holdTicks, float dt, int& budget) {
         g_simDied = false;
         bool pressed = false;
         bool released = false;
@@ -147,14 +190,26 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
                 GJBaseGameLayer::handleButton(false, JUMP_BUTTON, true);
                 released = true;
             }
+            if (--budget < 0) {
+                g_budgetHit = true;
+                break; // out of budget: give up and don't interfere
+            }
             GJBaseGameLayer::processCommands(dt, g_lastHalfTick, g_lastLastTick);
-            if (g_simDied) return false;
+            if (g_simDied) break;
         }
-        return true;
+        // A test run must never leave the button pressed: the checkpoint
+        // restore does NOT reset input, so a leftover press would stay held
+        // in the real game and make you keep jumping.
+        if (pressed && !released) {
+            GJBaseGameLayer::handleButton(false, JUMP_BUTTON, true);
+        }
+        if (g_budgetHit) return true;
+        return !g_simDied;
     }
 
     // Decide how many ticks to delay the click. 0 = fire now.
-    // foundOut = whether any tested delay survives. framesOut = chosen delay in frames.
+    // foundOut = whether any tested delay survives. framesOut = chosen delay in frames
+    // (-1 = test too heavy, -2 = skipped because clicks came too fast).
     int chooseDelayTicks(float dt, bool& foundOut, float& framesOut) {
         foundOut = true;
         framesOut = 0.f;
@@ -162,12 +217,22 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         auto pl = PlayLayer::get();
         if (!pl || m_player1->m_isDead) return 0;
 
+        // Don't run tests back-to-back (protects FPS if you spam clicks).
+        auto now = std::chrono::steady_clock::now();
+        double sinceLast = std::chrono::duration<double, std::milli>(now - g_lastSim).count();
+        if (sinceLast < MIN_SIM_GAP_MS) {
+            framesOut = -2.f;
+            return 0;
+        }
+        g_lastSim = now;
+        g_budgetHit = false;
+
         float frame = frameSeconds();
         int ticksPerFrame = std::max(1, static_cast<int>(std::lround(frame / dt)));
         int maxDelay  = intSetting("pred-delay", 1, 5) * ticksPerFrame;
         int lookTicks = intSetting("pred-lookahead", 5, 60) * ticksPerFrame;
         int holdTicks = intSetting("pred-hold", 1, 30) * ticksPerFrame;
-        int stride    = std::max(1, ticksPerFrame / 2);
+        int stride    = std::max(1, ticksPerFrame); // one test per frame
 
         CheckpointObject* cp = pl->createCheckpoint();
         if (!cp) return 0;
@@ -176,10 +241,11 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         g_simulating = true;
         int chosen = 0;
         bool found = false;
+        int budget = MAX_SIM_TICKS;
 
         for (int d = 0; d <= maxDelay; d += stride) {
             if (d > 0) pl->loadFromCheckpoint(cp); // rewind before each retry
-            if (runSimulation(d, lookTicks, holdTicks, dt)) {
+            if (runSimulation(d, lookTicks, holdTicks, dt, budget)) {
                 chosen = d;
                 found = true;
                 break; // earliest safe click wins
@@ -193,14 +259,16 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         foundOut = found;
         framesOut = static_cast<float>(chosen) / static_cast<float>(ticksPerFrame);
 
-        // If no delay saves you, don't interfere: your click goes through as normal.
+        if (g_budgetHit) {
+            foundOut = true;
+            framesOut = -1.f;
+            return 0;
+        }
+
         return found ? chosen : 0;
     }
 
     void handleButton(bool down, int button, bool isPlayer1) {
-        if (!g_simulating) {
-            log::info("DIAG: handleButton hook fired down={} button={} p1={}", down, button, isPlayer1);
-        }
         // Our own simulation calls come straight through.
         if (g_simulating) {
             return GJBaseGameLayer::handleButton(down, button, isPlayer1);
@@ -214,7 +282,7 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
             return GJBaseGameLayer::handleButton(down, button, isPlayer1);
         }
 
-        auto& pending = isPlayer1 ? g_p1 : g_p2;
+        auto& pendingRel = isPlayer1 ? g_p1 : g_p2;
         auto* player = isPlayer1 ? m_player1 : m_player2;
 
         bool predictive = isPlayer1
@@ -223,9 +291,9 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
             && modeAllowed(player);
 
         if (down) {
-            // Finish any delayed release first so this is a fresh click.
-            if (pending.active) {
-                pending.active = false;
+            // If we still owe the game a short release from an orb click, send it first.
+            if (pendingRel.active) {
+                pendingRel.active = false;
                 GJBaseGameLayer::handleButton(false, button, isPlayer1);
             }
 
@@ -240,26 +308,16 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
                 g_press.scheduled = false;
                 return;
             }
+
+            noteClick(isPlayer1);
             return GJBaseGameLayer::handleButton(true, button, isPlayer1);
         }
 
-        // ---- release ----
-        // If the click was still being held back, send it now so the release has something to end.
+        // ---- release: always passed straight through (never delayed) ----
         if (isPlayer1 && g_press.requested) {
-            deliverPress();
+            deliverPress(); // the click was still held back; send it so the release has something to end
         }
-
-        if (!modeAllowed(player)) {
-            return GJBaseGameLayer::handleButton(false, button, isPlayer1);
-        }
-        if (pending.active) return;
-
-        int frames = intSetting("frames", 1, 5);
-        pending.active = true;
-        pending.timeLeft = static_cast<float>(frames) * frameSeconds();
-
-        g_heldCount++;
-        showHud(fmt::format("RELEASE HELD +{}f", frames), COL_RELEASE);
+        return GJBaseGameLayer::handleButton(false, button, isPlayer1);
     }
 
     // Don't let the simulation eat the real queued inputs.
@@ -283,8 +341,8 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         g_lastHalfTick = isHalfTick;
         g_lastLastTick = isLastTick;
 
-        // Delayed releases
-        auto tick = [&](PendingRelease& pending, bool isPlayer1) {
+        // Short releases we owe the game after an orb click
+        auto tickRelease = [&](PendingRelease& pending, bool isPlayer1) {
             if (!pending.active) return;
             pending.timeLeft -= dt;
             if (pending.timeLeft <= 0.f) {
@@ -292,17 +350,51 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
                 GJBaseGameLayer::handleButton(false, JUMP_BUTTON, isPlayer1);
             }
         };
-        tick(g_p1, true);
-        tick(g_p2, false);
+        tickRelease(g_p1, true);
+        tickRelease(g_p2, false);
 
-        // Held-back press
+        // Orb buffer: did you click shortly before touching a NEW orb?
+        auto orbCheck = [&](OrbWindow& win, bool isPlayer1) {
+            if (!win.active) return;
+            auto* player = isPlayer1 ? m_player1 : m_player2;
+            if (!player || player->m_isDead) { win.active = false; return; }
+
+            win.timeLeft -= dt;
+            if (win.timeLeft <= 0.f) { win.active = false; return; }
+
+            if (!touchingUnusedOrb(player)) return;
+
+            win.active = false; // one orb click per click
+
+            // If you're still holding, the game activates the orb itself.
+            auto it = player->m_holdingButtons.find(JUMP_BUTTON);
+            bool holding = it != player->m_holdingButtons.end() && it->second;
+            if (holding) return;
+
+            float earlyFrames = (win.total - win.timeLeft) / std::max(frameSeconds(), 0.0001f);
+            GJBaseGameLayer::handleButton(true, JUMP_BUTTON, isPlayer1);
+            auto& rel = isPlayer1 ? g_p1 : g_p2;
+            rel.active = true;
+            rel.timeLeft = dt; // let go on the very next step
+
+            g_orbCount++;
+            showHud(fmt::format("ORB BUFFERED ({:.1f}f early)", earlyFrames), COL_ORB);
+        };
+        orbCheck(g_win1, true);
+        orbCheck(g_win2, false);
+
+        // Held-back press (predictive mode)
         if (g_press.requested) {
             if (!g_press.scheduled) {
                 bool found = true;
                 float frames = 0.f;
                 int delayTicks = chooseDelayTicks(dt, found, frames);
 
-                if (!found) {
+                if (frames == -1.f) {
+                    showHud("TEST TOO HEAVY - SKIPPED", COL_FAIL);
+                } else if (frames == -2.f) {
+                    // clicked again too quickly: pass through silently
+                } else if (!found) {
                     g_unsavableCount++;
                     showHud("CAN'T SAVE THIS CLICK", COL_FAIL);
                 } else if (delayTicks > 0) {
@@ -334,29 +426,28 @@ class $modify(BufferPlayLayer, PlayLayer) {
         PlayLayer::setupHasCompleted();
 
         log::info("DIAG: setupHasCompleted hook fired, uiLayer={}", m_uiLayer != nullptr);
-        Notification::create("Click Buffer loaded", NotificationIcon::Success, 2.f)->show();
 
-        g_heldCount = 0;
+        g_orbCount = 0;
         g_delayedCount = 0;
         g_unsavableCount = 0;
+        clearAll();
 
         if (!m_uiLayer) return;
-        auto win = CCDirector::get()->getWinSize();
 
         auto msg = CCLabelBMFont::create("", "bigFont.fnt");
         msg->setID("click-hud-msg"_spr);
-        msg->setAnchorPoint({0.f, 1.f});
-        msg->setPosition({8.f, win.height - 8.f});
-        msg->setScale(0.45f);
+        msg->setAnchorPoint({0.f, 0.f});
+        msg->setPosition({8.f, 30.f});
+        msg->setScale(0.35f);
         msg->setOpacity(0);
         m_uiLayer->addChild(msg, 100);
 
         auto stats = CCLabelBMFont::create("", "bigFont.fnt");
         stats->setID("click-hud-stats"_spr);
-        stats->setAnchorPoint({0.f, 1.f});
-        stats->setPosition({8.f, win.height - 30.f});
-        stats->setScale(0.35f);
-        stats->setOpacity(220);
+        stats->setAnchorPoint({0.f, 0.f});
+        stats->setPosition({8.f, 8.f});
+        stats->setScale(0.22f);
+        stats->setOpacity(200);
         m_uiLayer->addChild(stats, 100);
 
         if (Mod::get()->getSettingValue<bool>("show-hud")) {
