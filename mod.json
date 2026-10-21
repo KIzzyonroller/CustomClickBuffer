@@ -3,11 +3,11 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.4.1",
+	"version": "v1.5.0",
 	"id": "yourname.customclickbuffer",
 	"name": "Custom Click Buffer",
 	"developer": "yourname",
-	"description": "Buffers orb clicks by 1-5 frames, with an experimental predictive mode that delays a click that would kill you.",
+	"description": "Buffers any early click by 1-5 frames, with an experimental predictive mode that delays a click that would kill you.",
 	"settings": {
 		"enabled": {
 			"type": "bool",
@@ -17,8 +17,8 @@
 		},
 		"frames": {
 			"type": "int",
-			"name": "Orb Buffer Window (frames)",
-			"description": "If you click up to this many frames before touching an orb, the mod activates the orb for you (1-5). It never holds your button longer than you did.",
+			"name": "Buffer Window (frames)",
+			"description": "If you click up to this many frames too early (in the air before landing, or before reaching an orb), the mod clicks for you the moment the click would work (1-5). It never holds your button longer than you did.",
 			"default": 2,
 			"min": 1,
 			"max": 5,
@@ -27,7 +27,7 @@
 		"player2": {
 			"type": "bool",
 			"name": "Buffer Player 2",
-			"description": "Also buffer orb clicks for player 2 (dual mode).",
+			"description": "Also buffer clicks for player 2 (dual mode).",
 			"default": true
 		},
 		"show-hud": {
