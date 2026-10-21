@@ -3,17 +3,56 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.5.0",
+	"version": "v1.6.0",
 	"id": "yourname.customclickbuffer",
 	"name": "Custom Click Buffer",
 	"developer": "yourname",
-	"description": "Buffers any early click by 1-5 frames, with an experimental predictive mode that delays a click that would kill you.",
+	"description": "Fixes clicks that come too early: delays a click that would kill you, and buffers early jumps and orb clicks by 1-5 frames.",
 	"settings": {
 		"enabled": {
 			"type": "bool",
 			"name": "Enabled",
 			"description": "Turn the whole mod on or off.",
 			"default": true
+		},
+		"predictive": {
+			"type": "bool",
+			"name": "Fix Early Clicks",
+			"description": "When you click, the mod quickly tests the next moment of gameplay. If the click would kill you, it holds it back (up to Max Click Delay) and clicks on the first step where you survive. Player 1 only. Can cause small stutters on heavy levels.",
+			"default": true
+		},
+		"pred-delay": {
+			"type": "int",
+			"name": "Max Click Delay (frames)",
+			"description": "The furthest the mod may push a click later to save you (1-5 frames).",
+			"default": 3,
+			"min": 1,
+			"max": 5,
+			"control": {
+				"slider": true
+			}
+		},
+		"pred-look-ms": {
+			"type": "int",
+			"name": "Look-ahead (ms)",
+			"description": "How far into the future each test checks for a death. ~300 ms covers a full cube jump. Higher = catches more, but more stutter.",
+			"default": 300,
+			"min": 100,
+			"max": 600,
+			"control": {
+				"slider": true
+			}
+		},
+		"pred-hold-ms": {
+			"type": "int",
+			"name": "Assumed Hold (ms)",
+			"description": "How long the test assumes you hold the click. Set it near your normal tap length.",
+			"default": 80,
+			"min": 10,
+			"max": 300,
+			"control": {
+				"slider": true
+			}
 		},
 		"frames": {
 			"type": "int",
@@ -22,7 +61,9 @@
 			"default": 2,
 			"min": 1,
 			"max": 5,
-			"control": { "slider": true }
+			"control": {
+				"slider": true
+			}
 		},
 		"player2": {
 			"type": "bool",
@@ -36,46 +77,47 @@
 			"description": "Shows a small readout in the bottom-left of the level: what the mod just did, plus running counts.",
 			"default": true
 		},
-		"predictive": {
+		"mode-cube": {
 			"type": "bool",
-			"name": "Predictive Press (EXPERIMENTAL)",
-			"description": "When you click, simulate the next moments. If the click would kill you, hold it back up to the delay below and fire it on the first frame that survives. Can lag or glitch music. Player 1 only.",
+			"name": "Cube",
+			"default": true
+		},
+		"mode-ball": {
+			"type": "bool",
+			"name": "Ball",
+			"default": true
+		},
+		"mode-ufo": {
+			"type": "bool",
+			"name": "UFO",
+			"default": true
+		},
+		"mode-robot": {
+			"type": "bool",
+			"name": "Robot",
+			"default": true
+		},
+		"mode-spider": {
+			"type": "bool",
+			"name": "Spider",
+			"default": true
+		},
+		"mode-ship": {
+			"type": "bool",
+			"name": "Ship",
+			"description": "Usually best left off.",
 			"default": false
 		},
-		"pred-delay": {
-			"type": "int",
-			"name": "Max Press Delay (frames)",
-			"description": "The furthest the mod may delay a click to save you (1-5).",
-			"default": 3,
-			"min": 1,
-			"max": 5,
-			"control": { "slider": true }
+		"mode-wave": {
+			"type": "bool",
+			"name": "Wave",
+			"description": "Usually best left off.",
+			"default": false
 		},
-		"pred-lookahead": {
-			"type": "int",
-			"name": "Look-ahead (frames)",
-			"description": "How far into the future each test run simulates. Higher = safer but slower.",
-			"default": 10,
-			"min": 5,
-			"max": 60,
-			"control": { "slider": true }
-		},
-		"pred-hold": {
-			"type": "int",
-			"name": "Assumed Hold (frames)",
-			"description": "In the test run, assume you hold the click this long before letting go.",
-			"default": 3,
-			"min": 1,
-			"max": 30,
-			"control": { "slider": true }
-		},
-		"mode-cube":   { "type": "bool", "name": "Cube",   "default": true },
-		"mode-ball":   { "type": "bool", "name": "Ball",   "default": true },
-		"mode-ufo":    { "type": "bool", "name": "UFO",    "default": true },
-		"mode-robot":  { "type": "bool", "name": "Robot",  "default": true },
-		"mode-spider": { "type": "bool", "name": "Spider", "default": true },
-		"mode-ship":   { "type": "bool", "name": "Ship",   "description": "Usually best left off.", "default": false },
-		"mode-wave":   { "type": "bool", "name": "Wave",   "description": "Usually best left off.", "default": false },
-		"mode-swing":  { "type": "bool", "name": "Swing",  "default": false }
+		"mode-swing": {
+			"type": "bool",
+			"name": "Swing",
+			"default": false
+		}
 	}
 }
