@@ -3,11 +3,11 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.6.2",
+	"version": "v1.7.0",
 	"id": "yourname.customclickbuffer",
 	"name": "Custom Click Buffer",
 	"developer": "yourname",
-	"description": "Fixes clicks that come too early: delays a click that would kill you, and buffers early jumps and orb clicks by 1-5 frames.",
+	"description": "Saves you from bad clicks: cancels or delays a click that would kill you, and buffers early jumps and orb clicks.",
 	"settings": {
 		"enabled": {
 			"type": "bool",
@@ -17,9 +17,20 @@
 		},
 		"fix-early-clicks": {
 			"type": "bool",
-			"name": "Fix Early Clicks",
-			"description": "When you click, the mod quickly tests the next moment of gameplay. If the click would kill you, it holds it back (up to Max Click Delay) and clicks on the first step where you survive. Player 1 only. Can cause small stutters on heavy levels.",
+			"name": "Fix Bad Clicks",
+			"description": "When you click, the mod quickly tests the next moment of gameplay. If the click would kill you, it delays or cancels it (see \"If a click would kill you\"). Player 1 only. Can cause small stutters on heavy levels.",
 			"default": true
+		},
+		"bad-click-mode": {
+			"type": "string",
+			"name": "If a click would kill you",
+			"description": "Delay, then cancel: try clicking up to Max Click Delay later; if no delay saves you, cancel the click. Cancel only: never delay, just throw the click away. Delay only: never cancel.",
+			"default": "Delay, then cancel",
+			"one-of": [
+				"Delay, then cancel",
+				"Cancel only",
+				"Delay only"
+			]
 		},
 		"pred-delay": {
 			"type": "int",
