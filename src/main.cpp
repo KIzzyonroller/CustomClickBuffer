@@ -58,6 +58,10 @@ namespace {
 
     // ---- simulation state ----
     bool g_simulating = false;
+    bool g_skipVisuals = false;   // "Fast Tests": skip drawing-only work during test runs
+    double g_lastTestMs = 0.0;    // how long the last click test took
+
+    bool skipVisuals() { return g_simulating && g_skipVisuals; }
     bool g_simDied = false;
     float g_lastDt = 1.f / 240.f;
     bool g_lastHalfTick = false;
@@ -122,12 +126,12 @@ namespace {
         bool predictive = mod->getSettingValue<bool>("fix-early-clicks");
 
         label->setString(fmt::format(
-            "{} {} | fix bad clicks {} | window {}f | buffered {} | delayed {} | cancelled {} | fail {} | unstuck {}",
+            "{} {} | fix bad clicks {} | window {}f | buffered {} | delayed {} | cancelled {} | fail {} | unstuck {} | test {:.0f}ms",
             Mod::get()->getVersion().toVString(),
             enabled ? "ON" : "OFF",
             predictive ? "ON" : "OFF",
             intSetting("frames", 1, 5),
-            g_orbCount, g_delayedCount, g_cancelCount, g_unsavableCount, g_stuckFixes
+            g_orbCount, g_delayedCount, g_cancelCount, g_unsavableCount, g_stuckFixes, g_lastTestMs
         ).c_str());
     }
 
@@ -443,7 +447,12 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         bool found = true;
         float frames = 0.f;
         bool cancel = false;
+
+        g_skipVisuals = Mod::get()->getSettingValue<bool>("fast-tests");
+        auto t0 = std::chrono::steady_clock::now();
         int delayTicks = chooseDelayTicks(dt, found, frames, cancel);
+        g_lastTestMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        log::info("DIAG: click test took {:.1f} ms", g_lastTestMs);
 
         if (cancel) {
             // Your click would have killed you: throw it away.
@@ -476,6 +485,17 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
             g_press.scheduled = true;
             g_press.timeLeft = delayTicks * dt;
         }
+    }
+
+    // Drawing-only work: pointless inside a test run.
+    void updateDebugDraw() {
+        if (skipVisuals()) return;
+        GJBaseGameLayer::updateDebugDraw();
+    }
+
+    void updateAudioVisualizer() {
+        if (skipVisuals()) return;
+        GJBaseGameLayer::updateAudioVisualizer();
     }
 
     void update(float frameDt) {
@@ -628,6 +648,33 @@ class $modify(BufferPlayLayer, PlayLayer) {
         } else {
             stats->setVisible(false);
         }
+    }
+
+    // ---- drawing / UI work skipped during test runs ("Fast Tests") ----
+    void updateVisibility(float dt) {
+        if (skipVisuals()) return;
+        PlayLayer::updateVisibility(dt);
+    }
+
+    void updateProgressbar() {
+        if (skipVisuals()) return;
+        PlayLayer::updateProgressbar();
+    }
+
+    void updateInfoLabel() {
+        if (skipVisuals()) return;
+        PlayLayer::updateInfoLabel();
+    }
+
+    void updateTimeLabel(int seconds, int centiseconds, bool decimals) {
+        if (skipVisuals()) return;
+        PlayLayer::updateTimeLabel(seconds, centiseconds, decimals);
+    }
+
+    // Test runs shouldn't add to your attempt time.
+    void updateAttemptTime(float attemptTime) {
+        if (g_simulating) return;
+        PlayLayer::updateAttemptTime(attemptTime);
     }
 
     // While simulating, a "death" is only a prediction, not a real death.
