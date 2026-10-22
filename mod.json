@@ -3,7 +3,7 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.7.1",
+	"version": "v1.7.2",
 	"id": "yourname.customclickbuffer",
 	"name": "Custom Click Buffer",
 	"developer": "yourname",
@@ -47,7 +47,7 @@
 			"type": "int",
 			"name": "Look-ahead (ms)",
 			"description": "How far into the future each test checks for a death. ~300 ms covers a full cube jump. Higher = catches more, but more stutter.",
-			"default": 300,
+			"default": 250,
 			"min": 100,
 			"max": 600,
 			"control": {
