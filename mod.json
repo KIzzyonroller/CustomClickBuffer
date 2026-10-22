@@ -3,7 +3,7 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.7.2",
+	"version": "v1.8.0",
 	"id": "yourname.customclickbuffer",
 	"name": "Custom Click Buffer",
 	"developer": "yourname",
@@ -64,6 +64,12 @@
 			"control": {
 				"slider": true
 			}
+		},
+		"fast-tests": {
+			"type": "bool",
+			"name": "Fast Tests",
+			"description": "Skip drawing work (object visibility, progress bar, labels, hitboxes) while the mod tests a click. Much less stutter. Turn off if the mod starts misjudging clicks.",
+			"default": true
 		},
 		"frames": {
 			"type": "int",
