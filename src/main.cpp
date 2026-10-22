@@ -241,7 +241,9 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
                 g_budgetHit = true;
                 break; // out of budget: give up and don't interfere
             }
-            GJBaseGameLayer::processCommands(dt, g_lastHalfTick, g_lastLastTick);
+            // A full game step: inputs, movement, collisions, deaths.
+            // (processCommands alone only applies inputs - the player never moved.)
+            GJBaseGameLayer::update(dt);
             if (g_simDied) break;
         }
         // A test run must never leave the button pressed: the checkpoint
@@ -292,13 +294,21 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         if (!cp) return 0;
         cp->retain();
 
+        // update() changes these; the checkpoint doesn't restore them.
+        double savedExtraDelta = m_extraDelta;
+        int savedStep = m_currentStep;
+
         g_simulating = true;
         int chosen = 0;
         bool found = false;
         int budget = MAX_SIM_TICKS;
 
         for (int d = 0; d <= maxDelay; d += stride) {
-            if (d > 0) pl->loadFromCheckpoint(cp); // rewind before each retry
+            if (d > 0) {
+                pl->loadFromCheckpoint(cp); // rewind before each retry
+                m_extraDelta = savedExtraDelta;
+                m_currentStep = savedStep;
+            }
             if (runSimulation(d, lookTicks, holdTicks, dt, budget)) {
                 chosen = d;
                 found = true;
@@ -310,13 +320,20 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         bool cancelSafe = false;
         if (!found && allowCancel && !g_budgetHit) {
             pl->loadFromCheckpoint(cp);
+            m_extraDelta = savedExtraDelta;
+            m_currentStep = savedStep;
             // A delay longer than the test means the click never happens.
             cancelSafe = runSimulation(lookTicks + 1, lookTicks, holdTicks, dt, budget);
         }
 
         pl->loadFromCheckpoint(cp); // put the real game back
+        m_extraDelta = savedExtraDelta;
+        m_currentStep = savedStep;
         g_simulating = false;
         cp->release();
+
+        log::info("DIAG: test result found={} chosenDelay={} cancelSafe={} budgetHit={} look={} steps",
+            found, chosen, cancelSafe, g_budgetHit, lookTicks);
 
         foundOut = found;
         framesOut = static_cast<float>(chosen) * dt / std::max(frame, 0.0001f);
@@ -418,6 +435,56 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         return GJBaseGameLayer::handleButton(false, button, isPlayer1);
     }
 
+    // Decide what to do with a held-back click. Runs at the start of a
+    // frame, OUTSIDE the game's step loop, so the test runs can use full
+    // game steps safely.
+    void decidePendingPress() {
+        float dt = g_lastDt;
+        bool found = true;
+        float frames = 0.f;
+        bool cancel = false;
+        int delayTicks = chooseDelayTicks(dt, found, frames, cancel);
+
+        if (cancel) {
+            // Your click would have killed you: throw it away.
+            // (Your release still reaches the game; releasing an
+            // un-pressed button does nothing.)
+            bool stillHolding = !g_press.releaseQueued;
+            g_press = {};
+            g_swallowRepeats = stillHolding;
+            g_cancelCount++;
+            showHud("CLICK CANCELLED - SAVED!", COL_SAVED);
+        } else if (frames == -1.f) {
+            showHud("TEST TOO HEAVY - SKIPPED", COL_FAIL);
+        } else if (frames == -2.f) {
+            // clicked again too quickly: pass through silently
+        } else if (!found) {
+            g_unsavableCount++;
+            showHud("CAN'T SAVE THIS CLICK", COL_FAIL);
+        } else if (delayTicks > 0) {
+            g_delayedCount++;
+            showHud(fmt::format("CLICK DELAYED {:.1f}f - SAVED!", frames), COL_SAVED);
+        } else {
+            showHud("CLICK SAFE", COL_SAFE);
+        }
+
+        if (cancel) {
+            // nothing to send
+        } else if (delayTicks <= 0) {
+            deliverPress();
+        } else {
+            g_press.scheduled = true;
+            g_press.timeLeft = delayTicks * dt;
+        }
+    }
+
+    void update(float frameDt) {
+        if (!g_simulating && g_press.requested && !g_press.scheduled) {
+            decidePendingPress();
+        }
+        GJBaseGameLayer::update(frameDt);
+    }
+
     // Don't let the simulation eat the real queued inputs.
     void processQueuedButtons(float dt, bool clearInputQueue) {
         if (g_simulating) return;
@@ -509,47 +576,12 @@ class $modify(BufferGJBGL, GJBaseGameLayer) {
         orbCheck(g_win1, true);
         orbCheck(g_win2, false);
 
-        // Held-back press (predictive mode)
+        // Held-back press: count the hold, and fire a delayed click on time.
+        // (The test that decides what to do runs in update(), at the start
+        // of the frame - never inside this step.)
         if (g_press.requested) {
             if (!g_press.releaseQueued) g_press.heldFor += dt;
-            if (!g_press.scheduled) {
-                bool found = true;
-                float frames = 0.f;
-                bool cancel = false;
-                int delayTicks = chooseDelayTicks(dt, found, frames, cancel);
-
-                if (cancel) {
-                    // Your click would have killed you: throw it away.
-                    // (Your release still reaches the game; releasing an
-                    // un-pressed button does nothing.)
-                    bool stillHolding = !g_press.releaseQueued;
-                    g_press = {};
-                    g_swallowRepeats = stillHolding;
-                    g_cancelCount++;
-                    showHud("CLICK CANCELLED - SAVED!", COL_SAVED);
-                } else if (frames == -1.f) {
-                    showHud("TEST TOO HEAVY - SKIPPED", COL_FAIL);
-                } else if (frames == -2.f) {
-                    // clicked again too quickly: pass through silently
-                } else if (!found) {
-                    g_unsavableCount++;
-                    showHud("CAN'T SAVE THIS CLICK", COL_FAIL);
-                } else if (delayTicks > 0) {
-                    g_delayedCount++;
-                    showHud(fmt::format("CLICK DELAYED {:.1f}f - SAVED!", frames), COL_SAVED);
-                } else {
-                    showHud("CLICK SAFE", COL_SAFE);
-                }
-
-                if (cancel) {
-                    // nothing to send
-                } else if (delayTicks <= 0) {
-                    deliverPress();
-                } else {
-                    g_press.scheduled = true;
-                    g_press.timeLeft = delayTicks * dt;
-                }
-            } else {
+            if (g_press.scheduled) {
                 g_press.timeLeft -= dt;
                 if (g_press.timeLeft <= 0.f) deliverPress();
             }
